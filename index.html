@@ -425,6 +425,10 @@
             Tank ${tankNum}
           </h3>
           <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="md:col-span-2 lg:col-span-2">
+              <label class="block text-sm font-medium text-slate-300 mb-2">Kimyasal Adı</label>
+              <input type="text" class="tank-chemical-name input-dark w-full px-4 py-3 rounded-xl text-white" placeholder="Örn: Ariel, Henkel P3..." value="${data.chemicalName || ''}">
+            </div>
             <div>
               <label class="block text-sm font-medium text-slate-300 mb-2">Tank Sıcaklığı (°C)</label>
               <input type="number" class="tank-temp input-dark w-full px-4 py-3 rounded-xl text-white" placeholder="60" value="${data.temperature || ''}">
@@ -642,6 +646,7 @@
       const tanks = [];
       document.querySelectorAll('[data-tank]').forEach((tank, index) => {
         tanks.push({
+          chemicalName: tank.querySelector('.tank-chemical-name').value,
           temperature: tank.querySelector('.tank-temp').value,
           capacity: tank.querySelector('.tank-capacity').value,
           ratio: tank.querySelector('.tank-ratio').value,
