@@ -640,6 +640,228 @@ async function exportToExcel(baseTestId) {
   }
 }
 
+// ============================================================
+//  EXCEL'DEN AKTAR (Import)
+// ============================================================
+async function handleExcelImport(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  try {
+    showToast('Excel okunuyor...', 'info');
+    const arrayBuffer = await file.arrayBuffer();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(arrayBuffer);
+
+    // Helper: get cell value (handles rich text, formulas, etc.)
+    function cv(sheet, r, c) {
+      const cell = sheet.getCell(r, c);
+      let val = cell.value;
+      if (val === null || val === undefined) return '';
+      if (typeof val === 'object') {
+        if (val.result !== undefined) return val.result; // formula
+        if (val.richText) return val.richText.map(rt => rt.text).join('');
+        if (val.text) return val.text;
+      }
+      return String(val).trim();
+    }
+
+    // Helper: find row containing text in column A (max 50 rows — export never exceeds ~30)
+    function findRow(sheet, text, startRow = 1) {
+      const maxRow = startRow + 50;
+      const target = text.toUpperCase();
+      for (let r = startRow; r <= maxRow; r++) {
+        try {
+          const val = cv(sheet, r, 1);
+          if (val && val.toUpperCase().includes(target)) return r;
+        } catch (e) { break; }
+      }
+      return -1;
+    }
+
+    // ── 1) "Test Bilgileri" sayfasını oku ──
+    const infoSheet = workbook.getWorksheet('Test Bilgileri');
+    if (!infoSheet) {
+      showToast('Excel\'de "Test Bilgileri" sayfası bulunamadı!', 'error');
+      return;
+    }
+
+    // Build a lookup from A column labels
+    const infoMap = {};
+    for (let r = 1; r <= 20; r++) {
+      const label = cv(infoSheet, r, 1);
+      const value = cv(infoSheet, r, 2);
+      if (label) infoMap[label] = value;
+    }
+
+    const testName = infoMap['Test Adı'] || '';
+    const company = infoMap['Firma'] || '';
+    const machineTypeRaw = infoMap['Makine Tipi'] || '';
+    const machineModel = infoMap['Makine Modeli'] || '';
+    const testTypeRaw = infoMap['Test Tipi'] || '';
+    const tankCount = parseInt(infoMap['Tank Sayısı']) || 1;
+
+    // Normalize machine type
+    const machineTypeVal = machineTypeRaw.toLowerCase().includes('kabin') ? 'kabin' : 'tambur';
+    const machineTypeDisplay = machineTypeVal === 'kabin' ? 'Kabin' : 'Tambur';
+
+    // Normalize test type
+    const isKapasitif = testTypeRaw.toLowerCase().includes('kapasitif');
+    const testTypeVal = isKapasitif ? 'kapasitif' : 'yikama-kalitesi';
+    const testTypeDisplay = isKapasitif ? 'Kapasitif' : 'Yıkama Kalitesi';
+
+    // ── 2) Versiyon sayfalarını oku ──
+    const versionSheets = [];
+    workbook.eachSheet((sheet, id) => {
+      if (sheet.name === 'Test Bilgileri') return;
+      versionSheets.push(sheet);
+    });
+
+    if (versionSheets.length === 0) {
+      showToast('Excel\'de versiyon sayfası bulunamadı!', 'error');
+      return;
+    }
+
+    // Sort version sheets by name (V1, V2, ...)
+    versionSheets.sort((a, b) => {
+      const aNum = parseInt(a.name.replace(/[^\d]/g, '') || '1');
+      const bNum = parseInt(b.name.replace(/[^\d]/g, '') || '1');
+      return aNum - bNum;
+    });
+
+    // Parse each version sheet
+    const parsedVersions = [];
+    for (const sheet of versionSheets) {
+      const versionName = sheet.name; // e.g., "V1", "V2"
+
+      // Read version header for datetime
+      const headerVal = cv(sheet, 1, 1); // "V5 - 06.03.2026 10:23"
+      let dateTime = '';
+      if (headerVal.includes(' - ')) {
+        dateTime = headerVal.split(' - ').slice(1).join(' - ').trim();
+      }
+
+      // ── TANK BİLGİLERİ ──
+      const tanks = [];
+      const tankHeaderRow = findRow(sheet, 'TANK BİLGİLERİ');
+      if (tankHeaderRow > 0) {
+        // Column headers are at tankHeaderRow + 1
+        // Data starts at tankHeaderRow + 2
+        for (let i = 0; i < tankCount; i++) {
+          const dr = tankHeaderRow + 2 + i;
+          const tankNo = cv(sheet, dr, 1);
+          if (!tankNo && tanks.length > 0) break; // No more tanks
+          tanks.push({
+            chemicalName: cv(sheet, dr, 2),
+            temperature: cv(sheet, dr, 3),
+            capacity: cv(sheet, dr, 4),
+            ratio: cv(sheet, dr, 5),
+            waterType: cv(sheet, dr, 6),
+            processTime: cv(sheet, dr, 7)
+          });
+        }
+      }
+
+      // ── KURUTMA BİLGİLERİ ──
+      let drying = null;
+      const dryingRow = findRow(sheet, 'KURUTMA BİLGİLERİ');
+      if (dryingRow > 0) {
+        drying = {
+          temperature: cv(sheet, dryingRow + 1, 2),
+          duration: cv(sheet, dryingRow + 2, 2),
+          type: cv(sheet, dryingRow + 3, 2)
+        };
+      }
+
+      // ── TAMBUR BİLGİLERİ ──
+      let tambur = null;
+      const tamburRow = findRow(sheet, 'TAMBUR BİLGİLERİ');
+      if (tamburRow > 0) {
+        tambur = {
+          inverterFreq: cv(sheet, tamburRow + 1, 2),
+          drumSpeed: cv(sheet, tamburRow + 2, 2)
+        };
+      }
+
+      // ── SEPET BİLGİLERİ ──
+      let sepet = null;
+      const sepetRow = findRow(sheet, 'SEPET BİLGİLERİ');
+      if (sepetRow > 0) {
+        sepet = {
+          basketFreq: cv(sheet, sepetRow + 1, 2),
+          basketSpeed: cv(sheet, sepetRow + 2, 2)
+        };
+      }
+
+      // ── KAPASİTE BİLGİLERİ ──
+      let kapasite = null;
+      const kapasiteRow = findRow(sheet, 'KAPASİTE BİLGİLERİ');
+      if (kapasiteRow > 0) {
+        kapasite = {
+          targetCount: cv(sheet, kapasiteRow + 1, 2),
+          actualCount: cv(sheet, kapasiteRow + 2, 2)
+        };
+      }
+
+      // ── NOTLAR ──
+      let notes = '';
+      const notesRow = findRow(sheet, 'NOTLAR');
+      if (notesRow > 0) {
+        notes = cv(sheet, notesRow + 1, 1);
+      }
+
+      parsedVersions.push({
+        version: versionName,
+        dateTime,
+        tanks,
+        drying,
+        tambur,
+        sepet,
+        kapasite,
+        notes
+      });
+    }
+
+    // ── 3) Firebase'e kaydet ──
+    const baseTestId = Date.now().toString();
+
+    for (let vi = 0; vi < parsedVersions.length; vi++) {
+      const pv = parsedVersions[vi];
+      const versionLabel = pv.version || `V${vi + 1}`;
+      const fullTestName = testName || `${company}_${machineTypeDisplay}_${testTypeDisplay}`;
+
+      const testDoc = {
+        id: (baseTestId + vi).toString(),
+        base_test_id: baseTestId,
+        test_name: fullTestName,
+        company: company,
+        machine_type: machineTypeDisplay,
+        machine_model: machineModel,
+        tank_count: tankCount,
+        test_type: testTypeDisplay,
+        version: versionLabel,
+        test_datetime: pv.dateTime,
+        tanks_data: JSON.stringify(pv.tanks),
+        drying_data: pv.drying ? JSON.stringify(pv.drying) : '',
+        tambur_data: pv.tambur ? JSON.stringify(pv.tambur) : '',
+        sepet_data: pv.sepet ? JSON.stringify(pv.sepet) : '',
+        kapasite_data: pv.kapasite ? JSON.stringify(pv.kapasite) : '',
+        notes: pv.notes,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      await db.collection(COLLECTION).add(testDoc);
+    }
+
+    showToast(`${parsedVersions.length} versiyon Excel'den başarıyla aktarıldı!`, 'success');
+
+  } catch (err) {
+    showToast('Excel okuma hatası: ' + err.message, 'error');
+    console.error('Excel import error:', err);
+  }
+}
+
 // Generate Tank Form HTML
 function generateTankForm(index, data = {}) {
   const tankNum = index + 1;
@@ -850,6 +1072,13 @@ function setupEventListeners() {
     document.getElementById('save-as-modal').classList.remove('flex');
   });
   document.getElementById('btn-confirm-save-as').addEventListener('click', saveAsTest);
+
+  // Excel Import
+  document.getElementById('btn-import-excel').addEventListener('click', () => {
+    document.getElementById('excel-file-input').value = '';
+    document.getElementById('excel-file-input').click();
+  });
+  document.getElementById('excel-file-input').addEventListener('change', handleExcelImport);
 
   // Delete Modal
   document.getElementById('btn-cancel-delete').addEventListener('click', closeDeleteModal);
