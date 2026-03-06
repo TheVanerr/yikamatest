@@ -42,7 +42,7 @@ function initApp() {
   initializeFirestore();
   
   // Auth state listener
-  /*
+  
   auth.onAuthStateChanged(user => {
     if (user && AUTHORIZED_USERS.includes(user.email)) {
       currentUser = user;
@@ -63,7 +63,6 @@ function initApp() {
       hideMainContent();
     }
   });
-  */
 }
 
 // Initialize Firestore listener
