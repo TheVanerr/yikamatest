@@ -13,7 +13,13 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+const auth = firebase.auth();
 const COLLECTION = 'yikamatest';
+
+// Authorized Users
+const AUTHORIZED_USERS = [
+  'fatihgural80@gmail.com'
+];
 
 // Application State
 let allTests = [];
@@ -23,12 +29,40 @@ let currentVersion = 'V1';
 let isEditing = false;
 let deleteTargetId = null;
 let _unsubscribe = null;
+let currentUser = null;
 
 // Initialize App
 function initApp() {
   setupEventListeners();
   updateBreadcrumb('home');
-  // Firestore real-time listener
+  
+  // Auth state listener
+  auth.onAuthStateChanged(user => {
+    if (user && AUTHORIZED_USERS.includes(user.email)) {
+      currentUser = user;
+      showUserInfo(user);
+      hideLoginModal();
+      showMainContent();
+      initializeFirestore();
+    } else if (user) {
+      // Unauthorized user
+      auth.signOut();
+      showLoginError('Bu email adresi sisteme erişim yetkisine sahip değil.');
+      showLoginModal();
+      hideMainContent();
+    } else {
+      // Not logged in
+      currentUser = null;
+      showLoginModal();
+      hideMainContent();
+    }
+  });
+}
+
+// Initialize Firestore listener
+function initializeFirestore() {
+  if (_unsubscribe) _unsubscribe();
+  
   _unsubscribe = db.collection(COLLECTION)
     .orderBy('created_at', 'desc')
     .onSnapshot(snapshot => {
@@ -42,6 +76,65 @@ function initApp() {
       showToast('Firebase bağlantı hatası: ' + err.message, 'error');
       console.error(err);
     });
+}
+
+// Authentication Functions
+function showLoginModal() {
+  document.getElementById('login-modal').classList.remove('hidden');
+  document.getElementById('login-modal').classList.add('flex');
+}
+
+function hideLoginModal() {
+  document.getElementById('login-modal').classList.add('hidden');
+  document.getElementById('login-modal').classList.remove('flex');
+}
+
+function showMainContent() {
+  document.getElementById('main-content').classList.remove('hidden');
+}
+
+function hideMainContent() {
+  document.getElementById('main-content').classList.add('hidden');
+}
+
+function showUserInfo(user) {
+  const userInfo = document.getElementById('user-info');
+  const systemStatus = document.getElementById('system-status');
+  
+  document.getElementById('user-photo').src = user.photoURL || 'https://via.placeholder.com/32';
+  document.getElementById('user-name').textContent = user.displayName || 'Kullanıcı';
+  document.getElementById('user-email').textContent = user.email;
+  
+  userInfo.classList.remove('hidden');
+  userInfo.classList.add('flex');
+  systemStatus.classList.add('hidden');
+}
+
+function showLoginError(message) {
+  const errorEl = document.getElementById('login-error');
+  errorEl.textContent = message;
+  errorEl.classList.remove('hidden');
+  setTimeout(() => errorEl.classList.add('hidden'), 5000);
+}
+
+async function signInWithGoogle() {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  try {
+    await auth.signInWithPopup(provider);
+  } catch (error) {
+    console.error('Login error:', error);
+    showLoginError('Giriş yapılırken bir hata oluştu: ' + error.message);
+  }
+}
+
+async function signOut() {
+  try {
+    await auth.signOut();
+    showToast('Çıkış yapıldı', 'info');
+  } catch (error) {
+    console.error('Logout error:', error);
+    showToast('Çıkış yapılırken hata oluştu', 'error');
+  }
 }
 
 // Toast Notification
@@ -606,6 +699,10 @@ function calculateChemical(tankElement) {
 
 // Setup Event Listeners
 function setupEventListeners() {
+  // Authentication
+  document.getElementById('btn-google-login').addEventListener('click', signInWithGoogle);
+  document.getElementById('btn-logout').addEventListener('click', signOut);
+  
   // New Test buttons
   document.getElementById('btn-new-test').addEventListener('click', showSetupForm);
   document.getElementById('btn-start').addEventListener('click', showSetupForm);
