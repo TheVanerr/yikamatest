@@ -36,7 +36,13 @@ function initApp() {
   setupEventListeners();
   updateBreadcrumb('home');
   
+  // ===== TEMP: AUTH DISABLED FOR TESTING =====
+  hideLoginModal();
+  showMainContent();
+  initializeFirestore();
+  
   // Auth state listener
+  /*
   auth.onAuthStateChanged(user => {
     if (user && AUTHORIZED_USERS.includes(user.email)) {
       currentUser = user;
@@ -57,6 +63,7 @@ function initApp() {
       hideMainContent();
     }
   });
+  */
 }
 
 // Initialize Firestore listener
@@ -389,136 +396,243 @@ async function deleteSingleVersion(docId, baseTestId) {
   }
 }
 
-// Export to Excel (XLSX format using ExcelJS)
+// Export to Excel (XLSX format using ExcelJS) — Sıfırdan yazıldı
 async function exportToExcel(baseTestId) {
   const versions = allTests.filter(t => (t.base_test_id || t.id) === baseTestId);
   if (versions.length === 0) return;
-  
+
+  // Sort versions by number
+  versions.sort((a, b) => {
+    const aNum = parseInt((a.version || 'V1').replace(/[^\d]/g, '') || '1');
+    const bNum = parseInt((b.version || 'V1').replace(/[^\d]/g, '') || '1');
+    return aNum - bNum;
+  });
+
   try {
     const testData = versions[0];
     const workbook = new ExcelJS.Workbook();
-    
-    // Create Info Sheet
+
+    // Common styles
+    const thinBorder = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' }
+    };
+    const centerAlign = { vertical: 'middle', horizontal: 'center' };
+    const wrapAlign = { vertical: 'middle', horizontal: 'center', wrapText: true };
+
+    // Helper: style a single cell
+    function sc(sheet, r, c, value, opts = {}) {
+      const cell = sheet.getCell(r, c);
+      cell.value = value;
+      cell.border = thinBorder;
+      cell.alignment = opts.wrap ? wrapAlign : centerAlign;
+      if (opts.fill) {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.fill } };
+      }
+      if (opts.bold) {
+        cell.font = Object.assign({}, cell.font || {}, { bold: true });
+      }
+      if (opts.fontColor) {
+        cell.font = Object.assign({}, cell.font || {}, { color: { argb: opts.fontColor } });
+      }
+      return cell;
+    }
+
+    // Helper: apply border to a range of cells (for merged areas)
+    function borderRange(sheet, r1, c1, r2, c2) {
+      for (let r = r1; r <= r2; r++) {
+        for (let c = c1; c <= c2; c++) {
+          sheet.getCell(r, c).border = thinBorder;
+        }
+      }
+    }
+
+    // Helper: safe JSON parse
+    function safeParse(str, fallback) {
+      if (!str || str === '') return fallback;
+      try {
+        if (typeof str === 'object') return str; // already parsed
+        return JSON.parse(str);
+      } catch (e) { return fallback; }
+    }
+
+    // Helper: convert to number if possible
+    function toNum(val) {
+      if (val === '' || val === null || val === undefined) return '';
+      const n = Number(val);
+      return isNaN(n) ? val : n;
+    }
+
+    // ============================================================
+    //  TEST BİLGİLERİ SAYFASI
+    // ============================================================
     const infoSheet = workbook.addWorksheet('Test Bilgileri');
-    
-    // Set column widths for info sheet - 25 for both A and B
-    infoSheet.getColumn(1).width = 25;
-    infoSheet.getColumn(2).width = 25;
-    
-    // Add data
-    infoSheet.addRow(['Test Bilgileri']);
-    infoSheet.addRow([]);
-    infoSheet.addRow(['Test Adı', testData.test_name]);
-    infoSheet.addRow(['Firma', testData.company]);
-    infoSheet.addRow(['Makine Tipi', testData.machine_type]);
-    infoSheet.addRow(['Makine Modeli', testData.machine_model]);
-    infoSheet.addRow(['Test Tipi', testData.test_type]);
-    infoSheet.addRow(['Tank Sayısı', testData.tank_count]);
-    
-    // Set all row heights to 25 and center alignment
-    infoSheet.eachRow((row, rowNumber) => {
-      row.height = 25;
-      row.eachCell((cell) => {
-        cell.alignment = { vertical: 'middle', horizontal: 'center' };
-      });
+    infoSheet.getColumn(1).width = 22;
+    infoSheet.getColumn(2).width = 38;
+
+    // Row 2: Title "Test Bilgileri" (merged A2:B2)
+    infoSheet.mergeCells('A2:B2');
+    sc(infoSheet, 2, 1, 'Test Bilgileri', { fill: 'FFFFFF00', bold: true });
+    infoSheet.getCell(2, 2).border = thinBorder;
+
+    // Rows 4-9: Info data
+    const infoItems = [
+      ['Test Adı', testData.test_name || ''],
+      ['Firma', testData.company || ''],
+      ['Makine Tipi', testData.machine_type || ''],
+      ['Makine Modeli', testData.machine_model || ''],
+      ['Test Tipi', testData.test_type || ''],
+      ['Tank Sayısı', testData.tank_count || '']
+    ];
+    infoItems.forEach((item, idx) => {
+      const row = idx + 4;
+      sc(infoSheet, row, 1, item[0], { fill: 'FFFFFF00', bold: true });
+      sc(infoSheet, row, 2, item[1], { bold: true });
     });
-    
-    // Merge first row for title
-    infoSheet.mergeCells('A1:B1');
-    
-    // Create sheets for each version
+
+    // Set row heights for info sheet
+    for (let i = 1; i <= 15; i++) infoSheet.getRow(i).height = 28;
+
+    // ============================================================
+    //  VERSİYON SAYFALARI (V1, V2, ...)
+    // ============================================================
     for (const version of versions) {
       const sheetName = (version.version || 'V1').substring(0, 31);
       const sheet = workbook.addWorksheet(sheetName);
-      
-      // Set column widths - A:25, B-I:20
-      sheet.getColumn(1).width = 25; // A
-      for (let i = 2; i <= 9; i++) { // B to I
-        sheet.getColumn(i).width = 20;
-      }
-      
-      // Parse JSON data
-      const tanksData = version.tanks_data ? JSON.parse(version.tanks_data) : [];
-      const dryingData = version.drying_data ? JSON.parse(version.drying_data) : null;
-      const tamburData = version.tambur_data ? JSON.parse(version.tambur_data) : null;
-      const sepetData = version.sepet_data ? JSON.parse(version.sepet_data) : null;
-      const kapasiteData = version.kapasite_data ? JSON.parse(version.kapasite_data) : null;
-      
-      // Add version header
-      sheet.addRow([`${version.version || 'V1'} - ${version.test_datetime || ''}`]);
-      sheet.addRow([]);
-      
-      // Tank Data
+
+      // Column widths
+      sheet.getColumn(1).width = 24;
+      for (let i = 2; i <= 13; i++) sheet.getColumn(i).width = 20;
+
+      // Parse all data safely
+      const tanksData = safeParse(version.tanks_data, []);
+      const dryingData = safeParse(version.drying_data, null);
+      const tamburData = safeParse(version.tambur_data, null);
+      const sepetData = safeParse(version.sepet_data, null);
+      const kapasiteData = safeParse(version.kapasite_data, null);
+
+      let r = 1; // current row pointer
+
+      // ── Versiyon Başlığı ──
+      sc(sheet, r, 1, `${version.version || 'V1'} - ${version.test_datetime || ''}`, { fill: 'FFC6EFCE', bold: true });
+      r += 2; // 1 boş satır bırak
+
+      // ── TANK BİLGİLERİ ──
       if (tanksData && tanksData.length > 0) {
-        sheet.addRow(['TANK BİLGİLERİ']);
-        sheet.addRow(['Tank No', 'Kimyasal Adı', 'Sıcaklık (°C)', 'Konsantrasyon (%)', 'Kimyasal (L)', 'Su (L)', 'Süre (dk)', 'İşlem Süresi (dk)']);
+        // Başlık satırı (A:G merge)
+        sheet.mergeCells(r, 1, r, 7);
+        sc(sheet, r, 1, 'TANK BİLGİLERİ', { fill: 'FF00B0F0', bold: true, fontColor: 'FFFFFFFF' });
+        borderRange(sheet, r, 1, r, 7);
+        r++;
+
+        // Kolon başlıkları
+        const tankHeaders = ['Tank No', 'Kimyasal Adı', 'Sıcaklık (°C)', 'Kapasite (L)', 'Oran (%)', 'Su Tipi', 'İşlem Süresi (dk)'];
+        tankHeaders.forEach((h, ci) => sc(sheet, r, ci + 1, h, { bold: true }));
+        r++;
+
+        // Veri satırları
         tanksData.forEach((tank, idx) => {
-          sheet.addRow([
-            idx + 1,
-            tank.chemicalName || '',
-            tank.temp || '',
-            tank.concentration || '',
-            tank.chemical || '',
-            tank.water || '',
-            tank.duration || '',
-            tank.processTime || ''
-          ]);
+          sc(sheet, r, 1, idx + 1);
+          sc(sheet, r, 2, tank.chemicalName || '');
+          sc(sheet, r, 3, toNum(tank.temperature));
+          sc(sheet, r, 4, toNum(tank.capacity));
+          sc(sheet, r, 5, toNum(tank.ratio));
+          sc(sheet, r, 6, tank.waterType || '');
+          sc(sheet, r, 7, toNum(tank.processTime));
+          r++;
         });
-        sheet.addRow([]);
+        r++; // boş satır
       }
-      
-      // Drying Data
+
+      // ── KURUTMA BİLGİLERİ ──
       if (dryingData) {
-        sheet.addRow(['KURUTMA BİLGİLERİ']);
-        sheet.addRow(['Sıcaklık (°C)', dryingData.temp || '']);
-        sheet.addRow([]);
+        sheet.mergeCells(r, 1, r, 2);
+        sc(sheet, r, 1, 'KURUTMA BİLGİLERİ', { fill: 'FFFFC000', bold: true });
+        sheet.getCell(r, 2).border = thinBorder;
+        r++;
+
+        [['Sıcaklık (°C)', toNum(dryingData.temperature)],
+         ['Süre (dk)', toNum(dryingData.duration)],
+         ['Tip', dryingData.type || '']
+        ].forEach(d => { sc(sheet, r, 1, d[0]); sc(sheet, r, 2, d[1]); r++; });
+        r++; // boş satır
       }
-      
-      // Tambur Data
+
+      // ── TAMBUR BİLGİLERİ ──
       if (tamburData) {
-        sheet.addRow(['TAMBUR BİLGİLERİ']);
-        sheet.addRow(['Frekans (Hz)', tamburData.drumFreq || '']);
-        sheet.addRow(['Devir (RPM)', tamburData.drumSpeed || '']);
-        sheet.addRow([]);
+        sheet.mergeCells(r, 1, r, 2);
+        sc(sheet, r, 1, 'TAMBUR BİLGİLERİ', { fill: 'FF92D050', bold: true });
+        sheet.getCell(r, 2).border = thinBorder;
+        r++;
+        [['İnverter Frekansı (Hz)', toNum(tamburData.inverterFreq)],
+         ['Tambur Devri (RPM)', toNum(tamburData.drumSpeed)]
+        ].forEach(d => { sc(sheet, r, 1, d[0]); sc(sheet, r, 2, d[1]); r++; });
+        r++; // boş satır
       }
-      
-      // Sepet Data
+
+      // ── SEPET BİLGİLERİ ──
       if (sepetData) {
-        sheet.addRow(['SEPET BİLGİLERİ']);
-        sheet.addRow(['Frekans (Hz)', sepetData.basketFreq || '']);
-        sheet.addRow(['Devir (RPM)', sepetData.basketSpeed || '']);
-        sheet.addRow([]);
+        sheet.mergeCells(r, 1, r, 2);
+        sc(sheet, r, 1, 'SEPET BİLGİLERİ', { fill: 'FF00B0F0', bold: true });
+        sheet.getCell(r, 2).border = thinBorder;
+        r++;
+
+        [['Sepet Frekansı (Hz)', toNum(sepetData.basketFreq)],
+         ['Sepet Devri (RPM)', toNum(sepetData.basketSpeed)]
+        ].forEach(d => { sc(sheet, r, 1, d[0]); sc(sheet, r, 2, d[1]); r++; });
+        r++; // boş satır
       }
-      
-      // Kapasite Data
+
+      // ── KAPASİTE BİLGİLERİ ──
       if (kapasiteData) {
-        sheet.addRow(['KAPASİTE BİLGİLERİ']);
-        sheet.addRow(['Beklenen Miktar', kapasiteData.expected || '']);
-        sheet.addRow(['Gerçekleşen Miktar', kapasiteData.actual || '']);
-        sheet.addRow([]);
+        sheet.mergeCells(r, 1, r, 2);
+        sc(sheet, r, 1, 'KAPASİTE BİLGİLERİ', { fill: 'FFFF00FF', bold: true });
+        sheet.getCell(r, 2).border = thinBorder;
+        r++;
+
+        [['Hedef Miktar', toNum(kapasiteData.targetCount)],
+         ['Gerçekleşen Miktar', toNum(kapasiteData.actualCount)]
+        ].forEach(d => { sc(sheet, r, 1, d[0]); sc(sheet, r, 2, d[1]); r++; });
+        r++; // boş satır
       }
-      
-      // Set all row heights to 25 and center alignment for version sheet
-      sheet.eachRow((row) => {
-        row.height = 25;
-        row.eachCell((cell) => {
-          cell.alignment = { vertical: 'middle', horizontal: 'center' };
-        });
-      });
+
+      // ── NOTLAR ──
+      if (version.notes) {
+        // Başlık (geniş merge A:M)
+        sheet.mergeCells(r, 1, r, 13);
+        sc(sheet, r, 1, 'NOTLAR', { fill: 'FF40E0D0', bold: true });
+        borderRange(sheet, r, 1, r, 13);
+        r++;
+
+        // Not içeriği (2 satır merge A:M)
+        const noteStart = r;
+        sheet.mergeCells(r, 1, r + 1, 13);
+        sc(sheet, r, 1, version.notes, { wrap: true });
+        borderRange(sheet, noteStart, 1, noteStart + 1, 13);
+        r += 3;
+      }
+
+      // Satır yüksekliklerini EN SONDA ayarla (addRow kullanılmadığı için sorun yok)
+      for (let i = 1; i <= r + 5; i++) {
+        sheet.getRow(i).height = 25;
+      }
     }
-    
-    // Download
+
+    // ============================================================
+    //  DOSYA İNDİR
+    // ============================================================
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `${testData.test_name}_${new Date().getTime()}.xlsx`);
+    link.href = URL.createObjectURL(blob);
+    link.download = `${testData.test_name}_${Date.now()}.xlsx`;
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
+
     showToast('Excel dosyası indirildi', 'success');
   } catch (err) {
     showToast('Excel oluşturma hatası: ' + err.message, 'error');
