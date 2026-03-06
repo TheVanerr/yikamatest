@@ -308,15 +308,25 @@ function exportToExcel(baseTestId) {
     // Create Info Sheet
     const infoData = [
       ['Test Bilgileri'],
+      [],
       ['Test Adı', testData.test_name],
       ['Firma', testData.company],
       ['Makine Tipi', testData.machine_type],
       ['Makine Modeli', testData.machine_model],
       ['Test Tipi', testData.test_type],
       ['Tank Sayısı', testData.tank_count],
-      []
     ];
     const infoSheet = XLSX.utils.aoa_to_sheet(infoData);
+    
+    // Set column widths for info sheet
+    infoSheet['!cols'] = [
+      { wch: 20 }, // Column A (labels)
+      { wch: 30 }  // Column B (values)
+    ];
+    
+    // Merge cells for title
+    infoSheet['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
+    
     XLSX.utils.book_append_sheet(wb, infoSheet, 'Test Bilgileri');
     
     // Create sheets for each version
@@ -334,9 +344,13 @@ function exportToExcel(baseTestId) {
       const sepetData = version.sepet_data ? JSON.parse(version.sepet_data) : null;
       const kapasiteData = version.kapasite_data ? JSON.parse(version.kapasite_data) : null;
       
+      let headerRows = []; // Track header row indices for styling
+      
       // Tank Data
       if (tanksData && tanksData.length > 0) {
+        headerRows.push(sheetData.length); // Section header
         sheetData.push(['TANK BİLGİLERİ']);
+        headerRows.push(sheetData.length); // Column header
         sheetData.push(['Tank No', 'Kimyasal Adı', 'Sıcaklık (°C)', 'Konsantrasyon (%)', 'Kimyasal (L)', 'Su (L)', 'Süre (dk)', 'İşlem Süresi (dk)']);
         tanksData.forEach((tank, idx) => {
           sheetData.push([
@@ -355,6 +369,7 @@ function exportToExcel(baseTestId) {
       
       // Drying Data
       if (dryingData) {
+        headerRows.push(sheetData.length);
         sheetData.push(['KURUTMA BİLGİLERİ']);
         sheetData.push(['Sıcaklık (°C)', dryingData.temp || '']);
         sheetData.push([]);
@@ -362,6 +377,7 @@ function exportToExcel(baseTestId) {
       
       // Tambur Data
       if (tamburData) {
+        headerRows.push(sheetData.length);
         sheetData.push(['TAMBUR BİLGİLERİ']);
         sheetData.push(['Frekans (Hz)', tamburData.drumFreq || '']);
         sheetData.push(['Devir (RPM)', tamburData.drumSpeed || '']);
@@ -370,6 +386,7 @@ function exportToExcel(baseTestId) {
       
       // Sepet Data
       if (sepetData) {
+        headerRows.push(sheetData.length);
         sheetData.push(['SEPET BİLGİLERİ']);
         sheetData.push(['Frekans (Hz)', sepetData.basketFreq || '']);
         sheetData.push(['Devir (RPM)', sepetData.basketSpeed || '']);
@@ -378,6 +395,7 @@ function exportToExcel(baseTestId) {
       
       // Kapasite Data
       if (kapasiteData) {
+        headerRows.push(sheetData.length);
         sheetData.push(['KAPASİTE BİLGİLERİ']);
         sheetData.push(['Beklenen Miktar', kapasiteData.expected || '']);
         sheetData.push(['Gerçekleşen Miktar', kapasiteData.actual || '']);
@@ -385,6 +403,19 @@ function exportToExcel(baseTestId) {
       }
       
       const versionSheet = XLSX.utils.aoa_to_sheet(sheetData);
+      
+      // Set column widths
+      versionSheet['!cols'] = [
+        { wch: 10 },  // Tank No
+        { wch: 20 },  // Kimyasal Adı
+        { wch: 15 },  // Sıcaklık
+        { wch: 18 },  // Konsantrasyon
+        { wch: 15 },  // Kimyasal (L)
+        { wch: 12 },  // Su (L)
+        { wch: 12 },  // Süre
+        { wch: 16 }   // İşlem Süresi
+      ];
+      
       XLSX.utils.book_append_sheet(wb, versionSheet, sheetName);
     });
     
